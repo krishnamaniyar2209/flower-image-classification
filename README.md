@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/Status-Complete-brightgreen)
 ![University](https://img.shields.io/badge/Pace%20University-CS672-blue)
 
-> Fine-tuning a Pre-trained **ResNet50** model for flower species classification using both **TensorFlow** and **PyTorch** — built for CS672: Introduction to Deep Learning at Pace University (Fall 2025).
+> Fine-tuning a pre-trained **ResNet50** for 5-class flower classification in **both TensorFlow and PyTorch**, then comparing the two frameworks — built for CS672: Introduction to Deep Learning at Pace University (Fall 2025).
 
 ---
 
@@ -28,15 +28,14 @@
 
 ## 🔬 Overview
 
-This project implements **Transfer Learning** using a pre-trained ResNet50 model to classify 5 flower species. Both TensorFlow (Keras) and PyTorch frameworks are used and compared.
+This project implements **transfer learning** with a pre-trained ResNet50 (ImageNet weights) to classify 5 flower species, implemented and benchmarked in **both TensorFlow (Keras) and PyTorch**.
 
-- ✅ **Step 1** — Data preparation (load, resize, encode, split)
-- ✅ **Step 2** — Pre-trained ResNet50 selected (ImageNet weights)
-- ✅ **Step 3** — TensorFlow transfer learning with EarlyStopping + LR Scheduler
-- ✅ **Step 4** — PyTorch transfer learning with data augmentation + early stopping
-- ✅ **Step 5** — Full evaluation: Accuracy, Precision, Recall, F1, Confusion Matrices
-- ✅ **Model Serialization** — saved as `.keras` and `.pt`
-- ✅ **Framework Comparison** — side-by-side results table
+- ✅ Data preparation (load, resize, encode, stratified split)
+- ✅ Pre-trained ResNet50 with frozen base + custom head
+- ✅ TensorFlow training with EarlyStopping + ReduceLROnPlateau
+- ✅ PyTorch training with data augmentation + early stopping
+- ✅ Full evaluation: Accuracy, Precision, Recall, F1, confusion matrices
+- ✅ Side-by-side framework comparison
 
 ---
 
@@ -48,16 +47,15 @@ This project implements **Transfer Learning** using a pre-trained ResNet50 model
 |---|---|
 | Total Images | 4,317 |
 | Classes | 5 (daisy, dandelion, rose, sunflower, tulip) |
-| Images per Class | ~800 |
+| Per-class counts | dandelion 1,052 · tulip 984 · rose 784 · daisy 764 · sunflower 733 |
 | Image Size | 150×150 (raw), resized to 224×224 for ResNet50 |
 
 ### Data Split
-
-| Set | Size |
-|---|---|
-| Training | ~60% |
-| Validation | ~15% |
-| Test | 25% |
+| Set | Size | Share |
+|---|---|---|
+| Training | 2,589 | 60% |
+| Validation | 648 | 15% |
+| Test | 1,080 | 25% |
 
 ---
 
@@ -66,10 +64,12 @@ This project implements **Transfer Learning** using a pre-trained ResNet50 model
 flower-image-classification/
 │
 ├── Flower_Image_Classification.ipynb   # Main notebook
-├── flower_classifier_tensorflow.keras  # Saved TF model
-├── flower_classifier_pytorch.pt        # Saved PyTorch model
 ├── README.md                           # Documentation
 └── requirements.txt                    # Dependencies
+
+# Generated locally (not committed — large model files):
+#   flower_classifier_tensorflow.keras
+#   flower_classifier_pytorch.pt
 ```
 
 ---
@@ -77,53 +77,53 @@ flower-image-classification/
 ## 🔬 Methodology
 
 ### Step 1 — Data Preparation
-- Downloaded via `kagglehub`
-- Images loaded with OpenCV, resized to 150×150
-- Label encoding + one-hot encoding (`to_categorical`)
-- Stratified 75/25 train/test split
-- Validation set carved from training (20%)
+- Downloaded via `kagglehub`; images loaded with OpenCV, resized to 150×150
+- Label + one-hot encoding (`to_categorical`)
+- Stratified 75/25 train/test split; validation (20%) carved from training
 
 ### Step 2 — Pre-trained Model
-- **ResNet50** with ImageNet weights
-- `include_top=False` — custom classification head added
-- All base layers frozen
+- **ResNet50** with ImageNet weights, `include_top=False`, all base layers frozen, custom head added
 
 ### Step 3 — TensorFlow Implementation
 ```python
 base_model = ResNet50(weights='imagenet', include_top=False)
-# Freeze all base layers
 for layer in base_model.layers:
     layer.trainable = False
-# Custom head
 x = GlobalAveragePooling2D()(base_model.output)
 x = Dropout(0.3)(x)
 x = Dense(256, activation='relu')(x)
 output = Dense(5, activation='softmax')(x)
 ```
-- Optimizer: Adam (lr=0.001)
-- Loss: Categorical Crossentropy
+- Adam (lr=0.001), Categorical Crossentropy
 - Callbacks: EarlyStopping (patience=3) + ReduceLROnPlateau (factor=0.5)
 
 ### Step 4 — PyTorch Implementation
-- ResNet50 with pretrained weights
-- `fc` layer replaced: `nn.Linear(2048, 5)`
-- All layers except `fc` frozen
-- Data augmentation: RandomHorizontalFlip + RandomRotation
-- CrossEntropyLoss + Adam optimizer
-- Manual early stopping (patience=3)
+- ResNet50 pretrained; `fc` replaced with `nn.Linear(2048, 5)`, all other layers frozen
+- Augmentation: RandomHorizontalFlip + RandomRotation
+- CrossEntropyLoss + Adam, manual early stopping (patience=3)
 
 ---
 
 ## 📈 Results
 
 ### Framework Comparison
-
 | Framework | Accuracy | Precision | Recall | F1-Score |
 |---|---|---|---|---|
-| TensorFlow | — | — | — | — |
-| PyTorch | — | — | — | — |
+| TensorFlow | 0.860 | 0.862 | 0.854 | 0.857 |
+| **PyTorch** | **0.881** | **0.883** | **0.878** | **0.880** |
 
-> Fill in actual values after running the notebook.
+> **PyTorch outperformed TensorFlow** by ~2 points across all metrics — likely due to its added data augmentation (flip + rotation). Both models converged within a few epochs thanks to frozen ResNet50 features.
+
+### Per-Class Performance (PyTorch — best model)
+| Class | Precision | Recall | F1 | Support |
+|---|---|---|---|---|
+| daisy | 0.89 | 0.87 | 0.88 | 191 |
+| dandelion | 0.93 | 0.90 | 0.92 | 263 |
+| rose | 0.88 | 0.85 | 0.87 | 196 |
+| sunflower | 0.89 | 0.85 | 0.87 | 184 |
+| tulip | 0.83 | 0.91 | 0.87 | 246 |
+
+> **Rose** is the hardest class for both frameworks (lowest recall) — visually closest to tulip; **dandelion** is the easiest.
 
 ---
 
@@ -135,51 +135,43 @@ pip install -r requirements.txt
 jupyter notebook Flower_Image_Classification.ipynb
 ```
 
-### requirements.txt
-```
-tensorflow>=2.10.0
-torch>=2.0.0
-torchvision>=0.15.0
-opencv-python>=4.7.0
-scikit-learn>=1.1.0
-matplotlib>=3.6.0
-seaborn>=0.12.0
-tqdm>=4.64.0
-kagglehub>=0.1.0
-jupyter>=1.0.0
-```
+---
+
+## 🚀 Usage
+1. Open the notebook in Jupyter or Google Colab (GPU recommended)
+2. The dataset downloads automatically via `kagglehub`
+3. Run all cells top to bottom — both models train, evaluate, and compare automatically
 
 ---
 
 ## 💡 Key Findings
-
-- Transfer learning achieves strong accuracy with only 20 epochs
-- PyTorch augmentation (flip + rotation) helps generalization
-- ResNet50 frozen features are powerful enough for flower classification
-- EarlyStopping prevents overfitting efficiently
-- ReduceLROnPlateau helps fine-tune convergence
+- **Transfer learning converges fast** — frozen ResNet50 features reached ~86–88% test accuracy within a few epochs (TF early-stopped at epoch 5, best weights from epoch 2)
+- **PyTorch (88.1%) slightly beat TensorFlow (86.0%)**, helped by flip + rotation augmentation
+- **Rose** is the most-confused class (lowest recall in both frameworks); **dandelion** the easiest
+- **EarlyStopping + ReduceLROnPlateau** prevented overfitting and stabilized convergence
+- Frozen ImageNet features transfer well to a small (4.3K-image) flower dataset without fine-tuning the base
 
 ---
 
 ## 🛠️ Technologies Used
-
 | Tool | Purpose |
 |---|---|
-| TensorFlow/Keras | Transfer learning (Step 3) |
-| PyTorch | Transfer learning (Step 4) |
+| TensorFlow / Keras | Transfer learning (Step 3) |
+| PyTorch / torchvision | Transfer learning (Step 4) |
 | ResNet50 | Pre-trained base model |
 | OpenCV | Image loading and resizing |
 | scikit-learn | Metrics and data splitting |
-| Seaborn | Confusion matrix visualization |
+| Matplotlib / Seaborn | Confusion-matrix visualization |
 
 ---
 
 ## 👤 Author
 
-**Krishna Maniyar**
-- 🎓 Pace University — Seidenberg School of CSIS
-- 📘 CS672: Introduction to Deep Learning | Fall 2025
-- 🔗 [GitHub](https://github.com/krishnamaniyar2209)
+**Krishna Maniyar** — Data Scientist
+- 🎓 Pace University — Seidenberg School of CSIS, MS in Data Science
+- 📘 CS672: Introduction to Deep Learning (Fall 2025)
+- 📧 krishnamaniyarkm22@gmail.com
+- 🔗 [GitHub](https://github.com/krishnamaniyar2209) · [LinkedIn](https://www.linkedin.com/in/krishnamaniyar/) · [Portfolio](https://krishnamaniyar2209.github.io/)
 
 ---
 
