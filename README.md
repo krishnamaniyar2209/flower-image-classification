@@ -17,7 +17,9 @@
 - [Project Structure](#-project-structure)
 - [Methodology](#-methodology)
 - [Results](#-results)
+- [Confusion Matrices](#-confusion-matrices)
 - [What This Comparison Does and Does Not Show](#-what-this-comparison-does-and-does-not-show)
+- [Known Issue: Channel Order](#-known-issue-channel-order)
 - [Limitations & Next Steps](#-limitations--next-steps)
 - [Installation](#-installation)
 - [Usage](#-usage)
@@ -104,7 +106,7 @@ output = Dense(5, activation='softmax')(x)
 - Optimizer: Adam (lr=0.001), Categorical Crossentropy, batch size 32
 - Callbacks: `EarlyStopping(monitor='val_accuracy', patience=3, restore_best_weights=True)` and `ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-6)`
 - **No augmentation**
-- **Trainable head parameters: 525,829**
+- **Trainable head parameters: 525,829** (2048×256+256, plus 256×5+5)
 
 ### Step 3: PyTorch Implementation
 ```python
@@ -119,7 +121,7 @@ for name, param in torch_model.named_parameters():
 - Augmentation: `RandomHorizontalFlip()` and `RandomRotation(10)` on training data only
 - Optimizer: Adam (lr=0.001), CrossEntropyLoss, batch size 32
 - Manual early stopping on validation accuracy, patience 3
-- **Trainable head parameters: 10,245**
+- **Trainable head parameters: 10,245** (2048×5+5)
 
 ### Training Behaviour
 
@@ -130,7 +132,7 @@ for name, param in torch_model.named_parameters():
 | Best epoch | 2 (val acc 0.8997) | 10 (val acc 0.9105) |
 | Stopping trigger | EarlyStopping, patience 3 | Manual early stopping, patience 3 |
 
-TensorFlow peaked at epoch 2 and validation accuracy declined thereafter, while training accuracy kept climbing to 0.954. That divergence is overfitting on an unaugmented, 2,589-image training set. PyTorch, with augmentation, kept improving through epoch 10.
+TensorFlow peaked at epoch 2 and never exceeded that validation accuracy again (0.8827, 0.8642, then a partial recovery to 0.8920), while training accuracy kept climbing to 0.954. That divergence is overfitting on an unaugmented, 2,589-image training set. PyTorch, with augmentation, kept improving through epoch 10.
 
 ---
 
@@ -167,9 +169,58 @@ All figures are macro averages on the shared 1,080-image test set.
 | sunflower | 0.89 | 0.85 | 0.87 | 184 |
 | tulip | 0.83 | 0.91 | 0.87 | 246 |
 
-**The entire performance gap lives in one class.** Rose recall rises from 0.76 to 0.85 between the two runs. Every other class moves by 3 points or less, and dandelion and tulip are essentially unchanged. The 2.1-point difference in overall accuracy is almost entirely a rose story.
+---
 
-Rose is the weakest class in TensorFlow outright, and joint-weakest with sunflower in PyTorch. In both runs, **tulip has the lowest precision (0.81 and 0.83) alongside the highest recall (0.91)**, which is the signature of a class being over-predicted: the models reach for "tulip" when uncertain, and rose is the most likely donor given the visual similarity between the two.
+## 🔢 Confusion Matrices
+
+Rows are actual, columns predicted.
+
+**TensorFlow** — 929 / 1,080 correct
+
+| actual ↓ / pred → | daisy | dandelion | rose | sunflower | tulip |
+|---|---|---|---|---|---|
+| **daisy** | **160** | 18 | 2 | 4 | 7 |
+| **dandelion** | 5 | **239** | 5 | 10 | 4 |
+| **rose** | 13 | 1 | **148** | 2 | **32** |
+| **sunflower** | 2 | 7 | 9 | **157** | 9 |
+| **tulip** | 0 | 3 | 14 | 4 | **225** |
+
+**PyTorch** — 952 / 1,080 correct
+
+| actual ↓ / pred → | daisy | dandelion | rose | sunflower | tulip |
+|---|---|---|---|---|---|
+| **daisy** | **166** | 11 | 0 | 9 | 5 |
+| **dandelion** | 9 | **238** | 2 | 5 | 9 |
+| **rose** | 5 | 2 | **167** | 1 | **21** |
+| **sunflower** | 6 | 4 | 5 | **157** | 12 |
+| **tulip** | 1 | 1 | 16 | 4 | **224** |
+
+### The rose–tulip confusion, quantified
+
+| | TensorFlow | PyTorch |
+|---|---|---|
+| Rose misclassified as tulip | **32** | **21** |
+| Rose's other errors combined | 16 | 8 |
+| Share of rose errors going to tulip | **67%** | **72%** |
+| Tulip's total false positives | 52 | 47 |
+| Share of those originating from rose | **62%** | **45%** |
+
+Tulip carries the lowest precision (0.81 and 0.83) alongside the highest recall (0.91) in both runs — the signature of a class being over-predicted. The matrices confirm rose is the dominant donor of those false positives in both frameworks.
+
+### The gap is almost entirely one class
+
+Correct predictions per class, TensorFlow → PyTorch:
+
+| Class | TF | PyTorch | Δ |
+|---|---|---|---|
+| **rose** | 148 | 167 | **+19** |
+| daisy | 160 | 166 | +6 |
+| sunflower | 157 | 157 | 0 |
+| dandelion | 239 | 238 | −1 |
+| tulip | 225 | 224 | −1 |
+| **Total** | **929** | **952** | **+23** |
+
+**19 of the 23 additional correct predictions are roses — 83% of the entire improvement.** The 2.1-point accuracy difference is a rose story, not a general one.
 
 ---
 
@@ -189,16 +240,42 @@ The two implementations differ in **four** ways, not one. Only the frozen ResNet
 
 **What it does show is more interesting.** The TensorFlow head carries **51 times more trainable parameters** and still finishes 2 points behind. On a frozen backbone with fewer than 3,000 training images, augmentation and training duration matter considerably more than classifier capacity. TensorFlow's larger head reached its best validation accuracy at epoch 2 and then overfit, while the augmented PyTorch run with a bare linear layer kept improving for ten.
 
+> One caveat on the preprocessing row: both pipelines share the channel-order defect described below, so preprocessing differentiates the two runs less than the table suggests.
+
+---
+
+## 🐛 Known Issue: Channel Order
+
+**Both pipelines feed BGR images to models that expect RGB.**
+
+`cv2.imread()` returns BGR. The notebook's display cells correctly call `cv2.cvtColor(..., cv2.COLOR_BGR2RGB)`, but that conversion never reaches the training path:
+
+- **TensorFlow** — `resnet50.preprocess_input` uses `mode='caffe'`, which expects RGB input, reverses it to BGR, and subtracts BGR-ordered ImageNet means. Given BGR input it emits RGB and misaligns the mean subtraction.
+- **PyTorch** — `transforms.ToPILImage()` interprets a 3-channel array as RGB. With BGR data, red and blue swap before ImageNet RGB normalization, and torchvision's ResNet50 expects true RGB.
+
+The one-line fix, at load time:
+
+```python
+img_array = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
+```
+
+**Why it matters:**
+
+1. **86–88% is a floor, not a ceiling.** ImageNet-pretrained features degrade measurably on channel-swapped input.
+2. **It affects both runs identically**, so the TensorFlow-vs-PyTorch comparison above remains internally consistent — but it removes preprocessing as a genuine differentiator between them.
+3. **It is a candidate explanation for the rose–tulip confusion specifically.** Rose and tulip are separated largely by colour, and red↔blue is exactly the channel pair being swapped. Rerunning with correct channel order and re-reading the rose row of the confusion matrix is a direct test of that hypothesis, and the most interesting open question in the project.
+
 ---
 
 ## ⚠️ Limitations & Next Steps
 
-1. **The framework comparison is confounded.** To make it a real benchmark, hold the head architecture, augmentation, preprocessing, and epoch budget identical and vary only the library.
-2. **The backbone was never unfrozen.** Fine-tuning the final ResNet50 block at a low learning rate is the standard next step and would likely push accuracy past 92%.
-3. **Single run, single seed.** All results come from one training run at `random_state=42`. Repeating across seeds would show whether the 2.1-point gap exceeds run-to-run variance. It may not.
-4. **Confusion matrices are figures only.** The rose-to-tulip confusion is inferred from the precision and recall pattern rather than read directly. Printing the matrices would make the claim citable.
-5. **Images are upscaled, not native.** Files are loaded at 150×150 and then resized up to 224×224, so the pipeline discards resolution before restoring it. Loading directly at 224×224 would preserve detail that may matter for rose and tulip discrimination.
-6. **No class weighting.** The mild 1.43x imbalance is untreated. Unlikely to be the bottleneck, but untested.
+1. **Channel order is wrong in both pipelines.** See above. Fixing it and rerunning is the highest-value next step, ahead of any architectural change.
+2. **The framework comparison is confounded.** To make it a real benchmark, hold the head architecture, augmentation, preprocessing, and epoch budget identical and vary only the library.
+3. **The backbone was never unfrozen.** Fine-tuning the final ResNet50 block at a low learning rate is the standard next step and would likely push accuracy past 92%.
+4. **Single run, single seed.** All results come from one training run at `random_state=42`. Repeating across seeds would show whether the 2.1-point gap exceeds run-to-run variance. It may not.
+5. **Confusion matrices are plotted but not printed.** The counts in this README were read off the figures. Adding `print(confusion_matrix(...))` alongside the heatmaps would make them machine-readable and reproducible.
+6. **Images are upscaled, not native.** Files are loaded at 150×150 and then resized up to 224×224, so the pipeline discards resolution before restoring it. Loading directly at 224×224 would preserve detail that may matter for rose and tulip discrimination.
+7. **No class weighting.** The mild 1.43x imbalance is untreated. Unlikely to be the bottleneck, but untested.
 
 ---
 
@@ -224,8 +301,9 @@ jupyter notebook Flower_Image_Classification.ipynb
 
 - **Transfer learning converges fast.** Frozen ResNet50 features reached 86 to 88% test accuracy within a handful of epochs. TensorFlow's best weights came from epoch 2
 - **Augmentation and training duration beat classifier capacity.** The TensorFlow head has 51x more trainable parameters (525,829 vs 10,245) and still finishes 2 points lower. Its unaugmented run peaked at epoch 2 while training accuracy climbed to 0.954, a clear overfitting signature
-- **The gap is one class.** Rose recall improves from 0.76 to 0.85 between the two runs. Every other class moves by 3 points or less
-- **Tulip is over-predicted in both runs**, holding the lowest precision and highest recall. Rose is the most plausible source of those false positives
+- **The gap is one class.** Rose accounts for **19 of the 23** additional correct predictions PyTorch makes — 83% of the total improvement. Every other class moves by one to six images
+- **Rose is misread as tulip.** 32 of TensorFlow's 48 rose errors land on tulip (67%), and 21 of PyTorch's 29 (72%). Tulip holds the lowest precision and highest recall in both runs, the signature of over-prediction
+- **Both pipelines feed BGR to RGB-expecting models**, so the reported accuracies are a floor. Colour-based class pairs like rose and tulip are the most likely victims
 - **The comparison is not a framework benchmark.** Four variables differ between the runs, so the result reflects training recipe rather than library
 - **Frozen ImageNet features transfer well** to a small 4.3K-image flower dataset without unfreezing the base
 
@@ -250,7 +328,7 @@ jupyter notebook Flower_Image_Classification.ipynb
 **Krishna Maniyar**, Data Analyst
 - 🎓 Pace University, Seidenberg School of CSIS, MS in Data Science
 - 📘 CS672: Introduction to Deep Learning (Fall 2025)
-- 📧 krishnamaniyarkm22@gmail.com
+- 📧 maniyarkrishnakm22@gmail.com
 - 🔗 [GitHub](https://github.com/krishnamaniyar2209) · [LinkedIn](https://www.linkedin.com/in/krishnamaniyar/) · [Portfolio](https://krishnamaniyar2209.github.io/)
 
 ---
